@@ -1,0 +1,79 @@
+resources:
+  repositories:
+    - repository: templates
+      type: github
+      name: expensely/azure-devops-templates
+      endpoint: expensely
+
+trigger:
+  batch: true
+  branches:
+    include:
+      - "main"
+
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: build
+    displayName: Build
+    jobs:
+      - job: jmeter_container
+        displayName: JMeter Container
+        steps:
+          - task: PowerShell@2
+            displayName: Set build identifier
+            inputs:
+              targetType: inline
+              script: Write-Host "##vso[build.updatebuildnumber]1.0.$(build.buildid)-$(System.StageAttempt)"
+              errorActionPreference: default
+              showWarnings: true
+              pwsh: true
+          - template: ./docker/build.yml@templates
+            parameters:
+              target: build
+              workingDirectory: lambda
+              arguments: "--build-arg BUILD_NUMBER=$(Build.BuildNumber)"
+              tag: $(Build.BuildNumber)
+          - template: ./docker/build.yml@templates
+            parameters:
+              target: lambda-jmeter
+              workingDirectory: lambda
+              arguments: "--build-arg BUILD_NUMBER=$(Build.BuildNumber)"
+              tag: $(Build.BuildNumber)
+          - task: PowerShell@2
+            displayName: Tag image for docker.io
+            inputs:
+              targetType: inline
+              script: docker tag lambda-jmeter:$(Build.BuildNumber) expensely/lambda-jmeter:$(Build.BuildNumber)
+              errorActionPreference: default
+              showWarnings: true
+              pwsh: true
+          - task: Docker@2
+            displayName: Push to Docker
+            inputs:
+              containerRegistry: 'docker-hub'
+              repository: 'expensely/lambda-jmeter'
+              command: 'push'
+              tags: '$(Build.BuildNumber)'
+              addPipelineData: false
+              addBaseImageData: false
+          - task: PowerShell@2
+            displayName: Tag image for docker.io
+            inputs:
+              targetType: inline
+              script: docker tag lambda-jmeter:$(Build.BuildNumber) expensely/lambda-jmeter:latest
+              errorActionPreference: default
+              showWarnings: true
+              pwsh: true
+          - task: Docker@2
+            displayName: Push to Docker
+            inputs:
+              containerRegistry: 'docker-hub'
+              repository: 'expensely/lambda-jmeter'
+              command: 'push'
+              tags: 'latest'
+              addPipelineData: false
+              addBaseImageData: false
