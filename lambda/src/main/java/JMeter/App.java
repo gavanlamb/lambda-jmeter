@@ -40,7 +40,7 @@ public class App implements RequestHandler<Map<String, String>, String> {
     private static final String htmlReportPath = localBasePath + "/report-genarator-html";
     private static final String jsonReportPath = localBasePath + "/report-genarator-json";
     private static final String tempReportPath = localBasePath + "/report-genarator-temp";
-    private static final String reportPath = localBasePath + "/result.jtl";
+    private static final String resultsPath = localBasePath + "/result.jtl";
 
     @Override
     public String handleRequest(
@@ -79,8 +79,8 @@ public class App implements RequestHandler<Map<String, String>, String> {
                 return "Failed";
             }
 
-            String testPath = bucketBasePath + "/tests";
-            lambdaLogger.log("Bucket tests path:" + testPath + lineSeparator);
+            String bucketTestPath = bucketBasePath + "/tests";
+            lambdaLogger.log("Bucket tests path:" + bucketTestPath + lineSeparator);
 
             String testFileName = System.getenv("JMETER_LOADTEST_FILE");
             lambdaLogger.log("Test file name:" + testFileName + lineSeparator);
@@ -94,7 +94,7 @@ public class App implements RequestHandler<Map<String, String>, String> {
             String testFilePath = DownloadFileFromS3(
                     region,
                     bucketName,
-                    testPath,
+                    bucketTestPath,
                     testFileName);
 
             String userFileName = System.getenv("JMETER_USERS_FILE");
@@ -109,11 +109,11 @@ public class App implements RequestHandler<Map<String, String>, String> {
             String _ = DownloadFileFromS3(
                     region,
                     bucketName,
-                    testPath,
+                    bucketTestPath,
                     userFileName);
 
-            String reportPath = bucketBasePath + "/reports";
-            lambdaLogger.log("Bucket tests path:" + testPath + lineSeparator);
+            String bucketReportPath = bucketBasePath + "/report";
+            lambdaLogger.log("Bucket tests path:" + bucketReportPath + lineSeparator);
 
             String taskPath = System.getenv("LAMBDA_TASK_ROOT") == null ? System.getProperty("user.dir") : System.getenv("LAMBDA_TASK_ROOT");
             lambdaLogger.log("Path:" + taskPath + lineSeparator);
@@ -142,7 +142,7 @@ public class App implements RequestHandler<Map<String, String>, String> {
             lambdaLogger.log("Created loadTestFile" + lineSeparator);
             HashTree testPlanTree = SaveService.loadTree(testFile);
             lambdaLogger.log("Loaded testPlanTree" + lineSeparator);
-            AddReporting(testPlanTree, reportPath);
+            AddReporting(testPlanTree, resultsPath);
             AddArguments(testPlanTree);
 
             jMeter.configure(testPlanTree);
@@ -150,11 +150,11 @@ public class App implements RequestHandler<Map<String, String>, String> {
             jMeter.run();
             lambdaLogger.log("Executed jMeter" + lineSeparator);
 
-            GenerateHtmlReport(reportPath);
+            GenerateHtmlReport(resultsPath);
             UploadHtmlReportToS3(
                     region,
                     bucketName,
-                    reportPath);
+                    bucketReportPath);
 
             NotifyCodeDeploy(
                     "Succeeded",
