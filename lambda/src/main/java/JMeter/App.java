@@ -276,12 +276,18 @@ public class App implements RequestHandler<Map<String, String>, String> {
                 .build();
 
         String path = localBasePath + "/" + fileName;
+        lambdaLogger.log("Download destination:" + path + lineSeparator);
 
-        GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+        String key = bucketBasePath + "/" + fileName;
+        lambdaLogger.log("Download key:" + key + lineSeparator);
+
+        GetObjectRequest getObjectRequest = GetObjectRequest
+                .builder()
                 .bucket(bucketName)
-                .key(bucketBasePath + "/" + fileName)
+                .key(key)
                 .build();
-        DownloadFileRequest downloadRequest = DownloadFileRequest.builder()
+        DownloadFileRequest downloadRequest = DownloadFileRequest
+                .builder()
                 .destination(Paths.get(path))
                 .getObjectRequest(getObjectRequest)
                 .build();
@@ -290,7 +296,7 @@ public class App implements RequestHandler<Map<String, String>, String> {
         lambdaLogger.log("SDK HTTP status code:" + completedDownload.response().toString() + lineSeparator);
         lambdaLogger.log("SDK HTTP status code:" + completedDownload.response().sdkHttpResponse().toString() + lineSeparator);
         lambdaLogger.log("Downloaded file:" + fileName + lineSeparator);
-        return localBasePath + "/" + fileName;
+        return path;
     }
 
     private void NotifyCodeDeploy(
