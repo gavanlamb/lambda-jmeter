@@ -108,7 +108,7 @@ public class App implements RequestHandler<Map<String, String>, String> {
                     region,
                     bucketName,
                     testPath,
-                    testFileName);
+                    userFileName);
 
             String taskPath = System.getenv("LAMBDA_TASK_ROOT") == null ? System.getProperty("user.dir") : System.getenv("LAMBDA_TASK_ROOT");
             lambdaLogger.log("Path:" + taskPath + lineSeparator);
@@ -274,20 +274,20 @@ public class App implements RequestHandler<Map<String, String>, String> {
                         .targetThroughputInGbps(20.0))
                 .build();
 
-        String path = localBasePath + fileName;
+        String path = localBasePath + "/" + fileName;
 
         GetObjectRequest getObjectRequest = GetObjectRequest.builder()
                 .bucket(bucketName)
                 .key(bucketBasePath + "/" + fileName)
                 .build();
         DownloadFileRequest downloadRequest = DownloadFileRequest.builder()
-                .destination(Paths.get(path))
+                .destination(Paths.get(localBasePath))
                 .getObjectRequest(getObjectRequest)
                 .build();
 
         FileDownload _ = s3TransferManager.downloadFile(downloadRequest);
-        lambdaLogger.log("Downloaded file:" + path + lineSeparator);
-        return path;
+        lambdaLogger.log("Downloaded file:" + fileName + lineSeparator);
+        return localBasePath + "/" + fileName;
     }
 
     private void NotifyCodeDeploy(
