@@ -112,6 +112,9 @@ public class App implements RequestHandler<Map<String, String>, String> {
                     testPath,
                     userFileName);
 
+            String reportPath = bucketBasePath + "/reports";
+            lambdaLogger.log("Bucket tests path:" + testPath + lineSeparator);
+
             String taskPath = System.getenv("LAMBDA_TASK_ROOT") == null ? System.getProperty("user.dir") : System.getenv("LAMBDA_TASK_ROOT");
             lambdaLogger.log("Path:" + taskPath + lineSeparator);
 
@@ -151,7 +154,7 @@ public class App implements RequestHandler<Map<String, String>, String> {
             UploadHtmlReportToS3(
                     region,
                     bucketName,
-                    bucketBasePath);
+                    reportPath);
 
             NotifyCodeDeploy(
                     "Succeeded",
