@@ -29,6 +29,8 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
+import static software.amazon.awssdk.transfer.s3.SizeConstant.MB;
+
 public class App implements RequestHandler<Map<String, String>, String> {
 
     private LambdaLogger lambdaLogger;
@@ -264,13 +266,12 @@ public class App implements RequestHandler<Map<String, String>, String> {
             String bucketName,
             String bucketBasePath,
             String fileName){
-
-        String destinationFolder = System.getenv("S3_BUCKET_PATH");
-        lambdaLogger.log("Destination folder " + destinationFolder + lineSeparator);
+        lambdaLogger.log("Going to download file:" + fileName + lineSeparator);
         S3TransferManager s3TransferManager = S3TransferManager
                 .builder()
                 .s3ClientConfiguration(b -> b
                         .region(region)
+                        .minimumPartSizeInBytes(10 * MB)
                         .targetThroughputInGbps(20.0))
                 .build();
 
@@ -281,11 +282,13 @@ public class App implements RequestHandler<Map<String, String>, String> {
                 .key(bucketBasePath + "/" + fileName)
                 .build();
         DownloadFileRequest downloadRequest = DownloadFileRequest.builder()
-                .destination(Paths.get(localBasePath))
+                .destination(Paths.get(path))
                 .getObjectRequest(getObjectRequest)
                 .build();
 
-        FileDownload _ = s3TransferManager.downloadFile(downloadRequest);
+        CompletedFileDownload completedDownload = s3TransferManager.downloadFile(downloadRequest).completionFuture().join();
+        lambdaLogger.log("SDK HTTP status code:" + completedDownload.response().toString() + lineSeparator);
+        lambdaLogger.log("SDK HTTP status code:" + completedDownload.response().sdkHttpResponse().toString() + lineSeparator);
         lambdaLogger.log("Downloaded file:" + fileName + lineSeparator);
         return localBasePath + "/" + fileName;
     }
