@@ -16,6 +16,9 @@ pr: none
 pool:
   vmImage: ubuntu-latest
 
+variables:
+  - template: variables/production.ap-southeast-2.yml@templates
+
 stages:
   - stage: build
     displayName: Build
@@ -31,6 +34,7 @@ stages:
               errorActionPreference: default
               showWarnings: true
               pwsh: true
+          - template: aws/iam/configure.yml@templates
           - template: ./docker/build.yml@templates
             parameters:
               target: build
@@ -43,37 +47,8 @@ stages:
               workingDirectory: lambda
               arguments: "--build-arg BUILD_NUMBER=$(Build.BuildNumber)"
               tag: $(Build.BuildNumber)
-          - task: PowerShell@2
-            displayName: Tag image for docker.io
-            inputs:
-              targetType: inline
-              script: docker tag lambda-jmeter:$(Build.BuildNumber) expensely/lambda-jmeter:$(Build.BuildNumber)
-              errorActionPreference: default
-              showWarnings: true
-              pwsh: true
-          - task: Docker@2
-            displayName: Push to Docker
-            inputs:
-              containerRegistry: 'docker-hub'
-              repository: 'expensely/lambda-jmeter'
-              command: 'push'
-              tags: '$(Build.BuildNumber)'
-              addPipelineData: false
-              addBaseImageData: false
-          - task: PowerShell@2
-            displayName: Tag image for docker.io
-            inputs:
-              targetType: inline
-              script: docker tag lambda-jmeter:$(Build.BuildNumber) expensely/lambda-jmeter:latest
-              errorActionPreference: default
-              showWarnings: true
-              pwsh: true
-          - task: Docker@2
-            displayName: Push to Docker
-            inputs:
-              containerRegistry: 'docker-hub'
-              repository: 'expensely/lambda-jmeter'
-              command: 'push'
-              tags: 'latest'
-              addPipelineData: false
-              addBaseImageData: false
+          - template: ./aws/ecr/push.yml@templates
+            parameters:
+              imageName: lambda-jmeter
+              repositoryName: lambda-jmeter
+              tag: $(Build.BuildNumber)
