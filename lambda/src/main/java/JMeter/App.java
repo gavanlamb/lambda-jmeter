@@ -7,9 +7,8 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.codedeploy.CodeDeployClient;
 import software.amazon.awssdk.services.codedeploy.model.PutLifecycleEventHookExecutionStatusRequest;
 import software.amazon.awssdk.services.codedeploy.model.PutLifecycleEventHookExecutionStatusResponse;
-import software.amazon.awssdk.transfer.s3.CompletedDirectoryUpload;
-import software.amazon.awssdk.transfer.s3.DirectoryUpload;
-import software.amazon.awssdk.transfer.s3.S3TransferManager;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.transfer.s3.*;
 
 import org.apache.jmeter.config.Arguments;
 import org.apache.jmeter.engine.StandardJMeterEngine;
@@ -22,7 +21,6 @@ import org.apache.jmeter.save.SaveService;
 import org.apache.jmeter.util.JMeterUtils;
 import org.apache.jorphan.collections.HashTree;
 import org.apache.jorphan.collections.SearchByClass;
-import software.amazon.awssdk.transfer.s3.UploadDirectoryRequest;
 
 import java.io.File;
 import java.nio.file.Paths;
@@ -35,6 +33,12 @@ public class App implements RequestHandler<Map<String, String>, String> {
 
     private LambdaLogger lambdaLogger;
     private String lineSeparator = System.lineSeparator();
+
+    private static final String localBasePath = "/tmp";
+    private static final String htmlReportPath = localBasePath + "/report-genarator-html";
+    private static final String jsonReportPath = localBasePath + "/report-genarator-json";
+    private static final String tempReportPath = localBasePath + "/report-genarator-temp";
+    private static final String reportPath = localBasePath + "/result.jtl";
 
     @Override
     public String handleRequest(
@@ -50,17 +54,73 @@ public class App implements RequestHandler<Map<String, String>, String> {
         lambdaLogger.log("LifecycleEventHookExecutionId:" + lifecycleEventHookExecutionId + lineSeparator);
 
         try {
-            String path = System.getenv("LAMBDA_TASK_ROOT") == null ? System.getProperty("user.dir") : System.getenv("LAMBDA_TASK_ROOT");
-            lambdaLogger.log("Path:" + path + lineSeparator);
+            Region region = Region.of(System.getenv("AWS_REGION"));
+            lambdaLogger.log("Region: " + System.getenv("AWS_REGION") + lineSeparator);
+
+            String bucketName = System.getenv("S3_BUCKET");
+            lambdaLogger.log("Bucket name:" + bucketName + lineSeparator);
+            if(bucketName == null || bucketName.trim().equals("")){
+                NotifyCodeDeploy(
+                        "Failed",
+                        lifecycleEventHookExecutionId,
+                        deploymentId);
+                return "Failed";
+            }
+
+            String bucketBasePath = System.getenv("S3_BUCKET_PATH");
+            lambdaLogger.log("Bucket base path:" + bucketBasePath + lineSeparator);
+            if(bucketBasePath == null || bucketBasePath.trim().equals("")){
+                NotifyCodeDeploy(
+                        "Failed",
+                        lifecycleEventHookExecutionId,
+                        deploymentId);
+                return "Failed";
+            }
+
+            String testPath = bucketBasePath + "/tests";
+            lambdaLogger.log("Bucket tests path:" + testPath + lineSeparator);
+
+            String testFileName = System.getenv("JMETER_LOADTEST_FILE");
+            lambdaLogger.log("Test file name:" + testFileName + lineSeparator);
+            if(testFileName == null || testFileName.trim().equals("")){
+                NotifyCodeDeploy(
+                        "Failed",
+                        lifecycleEventHookExecutionId,
+                        deploymentId);
+                return "Failed";
+            }
+            String testFilePath = DownloadFileFromS3(
+                    region,
+                    bucketName,
+                    testPath,
+                    testFileName);
+
+            String userFileName = System.getenv("JMETER_USERS_FILE");
+            lambdaLogger.log("Users file name:" + userFileName + lineSeparator);
+            if(userFileName == null || userFileName.trim().equals("")){
+                NotifyCodeDeploy(
+                        "Failed",
+                        lifecycleEventHookExecutionId,
+                        deploymentId);
+                return "Failed";
+            }
+            String _ = DownloadFileFromS3(
+                    region,
+                    bucketName,
+                    testPath,
+                    testFileName);
+
+            String taskPath = System.getenv("LAMBDA_TASK_ROOT") == null ? System.getProperty("user.dir") : System.getenv("LAMBDA_TASK_ROOT");
+            lambdaLogger.log("Path:" + taskPath + lineSeparator);
 
             StandardJMeterEngine jMeter = new StandardJMeterEngine();
             lambdaLogger.log("Created jMeter" + lineSeparator);
 
-            String jMeterPropertiesPath = GetJMeterPropertiesPath(path);
+            String jMeterPropertiesPath = taskPath + "/lib/apache-jmeter-5.4.3/bin/jmeter.properties";
             lambdaLogger.log("JMeterPropertiesPath:" + jMeterPropertiesPath + lineSeparator);
             JMeterUtils.loadJMeterProperties(jMeterPropertiesPath);
 
-            String jMeterPath = GetJMeterPath(path);
+            String jMeterPath = taskPath + "/lib/apache-jmeter-5.4.3";
             lambdaLogger.log("JMeterPath:" + jMeterPath + lineSeparator);
             JMeterUtils.setJMeterHome(jMeterPath);
             lambdaLogger.log("JMeter home set" + lineSeparator);
@@ -73,14 +133,11 @@ public class App implements RequestHandler<Map<String, String>, String> {
             lambdaLogger.log("Loaded properties" + lineSeparator);
 
             // Load JMX
-            String testFileLocation = System.getenv("JMETER_TEST_FILE");
-            lambdaLogger.log("TestFileLocation:" + testFileLocation + lineSeparator);
-            File loadTestFile = new File(testFileLocation);
+            File testFile = new File(testFilePath);
             lambdaLogger.log("Created loadTestFile" + lineSeparator);
-            HashTree testPlanTree = SaveService.loadTree(loadTestFile);
+            HashTree testPlanTree = SaveService.loadTree(testFile);
             lambdaLogger.log("Loaded testPlanTree" + lineSeparator);
-            String logFile = "/tmp/result.jtl";
-            AddReporting(testPlanTree, logFile);
+            AddReporting(testPlanTree, reportPath);
             AddArguments(testPlanTree);
 
             jMeter.configure(testPlanTree);
@@ -88,10 +145,13 @@ public class App implements RequestHandler<Map<String, String>, String> {
             jMeter.run();
             lambdaLogger.log("Executed jMeter" + lineSeparator);
 
-            GenerateHtmlReport(logFile);
-            UploadToS3();
+            GenerateHtmlReport(reportPath);
+            UploadHtmlReportToS3(
+                    region,
+                    bucketName,
+                    bucketBasePath);
 
-            SetCodeDeployStatus(
+            NotifyCodeDeploy(
                     "Succeeded",
                     lifecycleEventHookExecutionId,
                     deploymentId);
@@ -100,7 +160,7 @@ public class App implements RequestHandler<Map<String, String>, String> {
             lambdaLogger.log("Exception occurred" + lineSeparator);
             lambdaLogger.log(exception + lineSeparator);
 
-            SetCodeDeployStatus(
+            NotifyCodeDeploy(
                     "Failed",
                     lifecycleEventHookExecutionId,
                     deploymentId);
@@ -142,21 +202,17 @@ public class App implements RequestHandler<Map<String, String>, String> {
 
     private void GenerateHtmlReport(
             String logFile) throws ConfigurationException, GenerationException {
+        lambdaLogger.log("Going to generate HTML report" + lineSeparator);
 
-        Boolean exportHtmlReport = Boolean.parseBoolean(System.getenv("EXPORT_JMETER_HTML"));
-        if (exportHtmlReport) {
-            lambdaLogger.log("Going to generate HTML report" + lineSeparator);
+        JMeterUtils.setProperty("jmeter.reportgenerator.exporter.html.classname", "org.apache.jmeter.report.dashboard.HtmlTemplateExporter");
+        JMeterUtils.setProperty("jmeter.reportgenerator.exporter.html.property.output_dir", htmlReportPath);
+        JMeterUtils.setProperty("jmeter.reportgenerator.exporter.json.property.output_dir", jsonReportPath);
+        JMeterUtils.setProperty("jmeter.reportgenerator.temp_dir", tempReportPath);
 
-            JMeterUtils.setProperty("jmeter.reportgenerator.exporter.html.classname", "org.apache.jmeter.report.dashboard.HtmlTemplateExporter");
-            JMeterUtils.setProperty("jmeter.reportgenerator.exporter.html.property.output_dir", "/tmp/report-genarator-html");
-            JMeterUtils.setProperty("jmeter.reportgenerator.exporter.json.property.output_dir", "/tmp/report-genarator-json");
-            JMeterUtils.setProperty("jmeter.reportgenerator.temp_dir", "/tmp/report-genarator-temp");
+        ReportGenerator generator = new ReportGenerator(logFile, null);
+        generator.generate();
 
-            ReportGenerator generator = new ReportGenerator(logFile, null);
-            generator.generate();
-
-            lambdaLogger.log("HTML report generated" + lineSeparator);
-        }
+        lambdaLogger.log("HTML report generated" + lineSeparator);
     }
 
     private HashMap<String, String> GetArguments() {
@@ -179,63 +235,62 @@ public class App implements RequestHandler<Map<String, String>, String> {
         return arguments;
     }
 
-    private String GetJMeterPropertiesPath(
-            String path) {
-
-        String[] elements = new String[]{
-                GetJMeterPath(path),
-                "bin",
-                "jmeter.properties",
-        };
-
-        return String.join(File.separator, elements);
-    }
-
-    private String GetJMeterPath(
-            String path) {
-
-        String[] elements = new String[]{
-                path,
-                "lib",
-                "apache-jmeter-5.4.3"
-        };
-
-        return String.join(File.separator, elements);
-    }
-
     // AWS
-    private void UploadToS3() {
+    private void UploadHtmlReportToS3(
+            Region region,
+            String bucketName,
+            String bucketBasePath) {
         lambdaLogger.log("Going to upload file to S3" + lineSeparator);
-        Boolean uploadToS3 = Boolean.parseBoolean(System.getenv("UPLOAD_TO_S3"));
-        if (uploadToS3) {
-            lambdaLogger.log("Starting report upload" + lineSeparator);
-            Region region = Region.of(System.getenv("AWS_REGION"));
-            lambdaLogger.log("Region: " + System.getenv("AWS_REGION") + lineSeparator);
 
-            String bucketName = System.getenv("S3_BUCKET");
-            lambdaLogger.log("Bucket name: " + bucketName + lineSeparator);
-            String destinationFolder = System.getenv("S3_BUCKET_PATH");
-            lambdaLogger.log("Destination folder " + destinationFolder + lineSeparator);
-
-            S3TransferManager s3TransferManager = S3TransferManager
-                    .builder()
-                    .s3ClientConfiguration(b -> b
-                            .region(region)
-                            .targetThroughputInGbps(20.0))
-                    .build();
-            UploadDirectoryRequest uploadRequest = UploadDirectoryRequest.builder()
-                    .sourceDirectory(Paths.get("/tmp"))
-                    .bucket(bucketName)
-                    .prefix(destinationFolder)
-                    .build();
-            DirectoryUpload directoryUpload = s3TransferManager.uploadDirectory(uploadRequest);
-            CompletedDirectoryUpload completedDirectoryUpload = directoryUpload.completionFuture().join();
-            completedDirectoryUpload.failedTransfers().forEach(a -> lambdaLogger.log(a.toString() + lineSeparator));
-        }
+        S3TransferManager s3TransferManager = S3TransferManager
+                .builder()
+                .s3ClientConfiguration(b -> b
+                        .region(region)
+                        .targetThroughputInGbps(20.0))
+                .build();
+        UploadDirectoryRequest uploadRequest = UploadDirectoryRequest.builder()
+                .sourceDirectory(Paths.get(htmlReportPath))
+                .bucket(bucketName)
+                .prefix(bucketBasePath)
+                .build();
+        DirectoryUpload directoryUpload = s3TransferManager.uploadDirectory(uploadRequest);
+        CompletedDirectoryUpload completedDirectoryUpload = directoryUpload.completionFuture().join();
+        completedDirectoryUpload.failedTransfers().forEach(a -> lambdaLogger.log(a.toString() + lineSeparator));
         lambdaLogger.log("Files uploaded to S3" + lineSeparator);
     }
 
-    private void SetCodeDeployStatus(
+    private String DownloadFileFromS3(
+            Region region,
+            String bucketName,
+            String bucketBasePath,
+            String fileName){
+
+        String destinationFolder = System.getenv("S3_BUCKET_PATH");
+        lambdaLogger.log("Destination folder " + destinationFolder + lineSeparator);
+        S3TransferManager s3TransferManager = S3TransferManager
+                .builder()
+                .s3ClientConfiguration(b -> b
+                        .region(region)
+                        .targetThroughputInGbps(20.0))
+                .build();
+
+        String path = localBasePath + fileName;
+
+        GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+                .bucket(bucketName)
+                .key(bucketBasePath + "/" + fileName)
+                .build();
+        DownloadFileRequest downloadRequest = DownloadFileRequest.builder()
+                .destination(Paths.get(path))
+                .getObjectRequest(getObjectRequest)
+                .build();
+
+        FileDownload _ = s3TransferManager.downloadFile(downloadRequest);
+        lambdaLogger.log("Downloaded file:" + path + lineSeparator);
+        return path;
+    }
+
+    private void NotifyCodeDeploy(
             String status,
             String lifecycleEventHookExecutionId,
             String deploymentId) {
