@@ -3,6 +3,8 @@ package JMeter;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.LambdaLogger;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
+import org.apache.jmeter.config.Argument;
+import org.apache.jmeter.testelement.TestPlan;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.codedeploy.CodeDeployClient;
 import software.amazon.awssdk.services.codedeploy.model.PutLifecycleEventHookExecutionStatusRequest;
@@ -141,7 +143,6 @@ public class App implements RequestHandler<Map<String, String>, String> {
             File testFile = new File(testFilePath);
             lambdaLogger.log("Created loadTestFile" + lineSeparator);
             HashTree testPlanTree = SaveService.loadTree(testFile);
-            lambdaLogger.log("Loaded testPlanTree" + lineSeparator);
             AddReporting(testPlanTree, resultsPath);
             AddArguments(testPlanTree);
 
@@ -179,11 +180,20 @@ public class App implements RequestHandler<Map<String, String>, String> {
 
         HashMap<String, String> arguments = GetArguments();
         if (arguments.size() > 0) {
-            SearchByClass<Arguments> udvSearch = new SearchByClass<>(Arguments.class);
-            testPlanTree.traverse(udvSearch);
-            Collection<Arguments> udvs = udvSearch.getSearchResults();
-            Arguments args = udvs.stream().findAny().orElseGet(Arguments::new);
-            arguments.keySet().forEach(key -> args.addArgument(key, arguments.get(key)));
+            SearchByClass<TestPlan> testPlanSearch = new SearchByClass<>(TestPlan.class);
+            lambdaLogger.log("testPlanSearch:" + testPlanSearch + lineSeparator);
+            testPlanTree.traverse(testPlanSearch);
+            Collection<TestPlan> testPlans = testPlanSearch.getSearchResults();
+            for (TestPlan testPlan : testPlans) {
+                Arguments testPlanArguments = testPlan.getArguments();
+
+                testPlanArguments.forEach(c -> {
+                    Argument a = (Argument) c.getObjectValue();
+                    if(arguments.containsKey(a.getName())){
+                        a.setValue(arguments.get(a.getName()));
+                    }
+                });
+            }
         }
         lambdaLogger.log("Arguments added" + lineSeparator);
     }
